@@ -2,11 +2,14 @@ use clap::error::ErrorKind;
 use clap::CommandFactory;
 use edit::get_editor;
 use fancy_regex::{Expr, NeuralMatcherFactory, RegexBuilder};
-use std::io::BufRead;
+use std::fs::File;
+use std::io::{self, BufRead, BufReader};
+use std::iter;
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::Command;
 use std::sync::{Arc, RwLock};
+use walkdir::WalkDir;
 
 use anyhow::{Context, Result};
 
@@ -16,6 +19,44 @@ use crate::neural_matchers::EmbedNeuralMatcherFactory;
 use crate::Args;
 use embeddings::converters::{self, Formats};
 use embeddings::ng;
+
+struct NamedReader {
+    pub name: String,
+    pub reader: Box<dyn BufRead>,
+}
+
+fn readers(path: &str, recursive: bool) -> Result<Box<dyn Iterator<Item = Result<NamedReader>>>> {
+    if path == "-" {
+        let reader: Box<dyn BufRead> = Box::new(io::stdin().lock());
+        let reader = NamedReader {
+            name: "(standard input)".to_string(),
+            reader: reader,
+        };
+        return Ok(Box::new(iter::once(Ok(reader))));
+    }
+
+    let meta = std::fs::metadata(path).with_context(|| format!("failed to access: {}", path))?;
+    if meta.is_dir() && !recursive {
+        return Err(anyhow::anyhow!("{}: Is a directory", path));
+    }
+
+    let readers = WalkDir::new(path)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+        .map(|e| {
+            let path = e.path();
+            let file = File::open(path).with_context(|| format!("failed to open: {:?}", path))?;
+            let reader = NamedReader {
+                name: path.to_string_lossy().into_owned(),
+                reader: Box::new(BufReader::new(file)) as Box<dyn BufRead>,
+            };
+
+            Ok(reader)
+        });
+
+    Ok(Box::new(readers))
+}
 
 fn pattern_uses_neural(pattern: &str) -> Result<bool> {
     Ok(Expr::parse_tree(pattern)?.expr.contains_neural())
@@ -53,7 +94,7 @@ pub fn handle_config(config: &NgrepConfig) -> Result<()> {
     std::process::exit(1);
 }
 
-pub fn handle_match(config: &mut NgrepConfig, args: Args, reader: Box<dyn BufRead>) -> Result<()> {
+pub fn handle_match(config: &mut NgrepConfig, args: Args) -> Result<()> {
     let mut cli = Args::command();
 
     if args.pattern.is_none() {
@@ -85,22 +126,34 @@ pub fn handle_match(config: &mut NgrepConfig, args: Args, reader: Box<dyn BufRea
     let displayer = MatchDisplayer::new(
         MatchDisplayerOptions::default()
             .with_line_number(args.line_number)
-            .with_only_matching(args.only_matching),
+            .with_only_matching(args.only_matching)
+            .with_file_name(args.recursive),
     );
 
     let mut stdout = std::io::stdout().lock();
-    for (inx, line) in reader.lines().enumerate() {
-        let line = line?;
-        let captures: Vec<(usize, usize)> = neural_regex
-            .find_iter(line.as_str())
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .with_context(|| format!("Regex matching failed on line {}", inx + 1))?
-            .into_iter()
-            .map(|cap| (cap.start(), cap.end()))
-            .collect();
 
-        if !captures.is_empty() {
-            displayer.display_line(&mut stdout, inx, &line, &captures);
+    for input in readers(&args.file, args.recursive)? {
+        let input = input?;
+
+        for (inx, line) in input.reader.lines().enumerate() {
+            let line = line?;
+            let captures: Vec<(usize, usize)> = neural_regex
+                .find_iter(line.as_str())
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .with_context(|| format!("Regex matching failed on line {}", inx + 1))?
+                .into_iter()
+                .map(|cap| (cap.start(), cap.end()))
+                .collect();
+
+            if !captures.is_empty() {
+                let ret = displayer.display_line(&mut stdout, &input.name, inx, &line, &captures);
+                if let Err(e) = ret {
+                    if e.kind() == std::io::ErrorKind::BrokenPipe {
+                        std::process::exit(0);
+                    }
+                    return Err(e.into());
+                }
+            }
         }
     }
 

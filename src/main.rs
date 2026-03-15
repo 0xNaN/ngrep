@@ -3,13 +3,9 @@ mod config;
 mod displayers;
 mod neural_matchers;
 
-use std::{
-    fs::File,
-    io::{self, BufRead, BufReader},
-    path::{Path, PathBuf},
-};
+use std::path::PathBuf;
 
-use anyhow::{Context, Error, Result};
+use anyhow::{Error, Result};
 use clap::{Parser, Subcommand};
 use commands::{handle_config, handle_import, handle_match};
 use config::NgrepConfig;
@@ -46,6 +42,10 @@ pub struct Args {
     /// Prints only the matching part of the line
     #[arg(long, short = 'o', default_value = "false")]
     only_matching: bool,
+
+    /// Recursively search subdirectories listed
+    #[arg(long, short = 'r', short_alias = 'R', default_value = "false")]
+    recursive: bool,
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -72,17 +72,6 @@ enum Commands {
     Config,
 }
 
-fn reader(path: &str) -> Result<Box<dyn BufRead>> {
-    match path {
-        "-" => Ok(Box::new(io::stdin().lock())),
-        _ => {
-            let file =
-                File::open(&Path::new(path)).context(format!("failed to open: '{}'", path))?;
-            Ok(Box::new(BufReader::new(file)))
-        }
-    }
-}
-
 fn main() -> Result<(), Error> {
     let args: Args = Args::parse();
     let mut config = NgrepConfig::load_or_init(&args)?;
@@ -99,6 +88,5 @@ fn main() -> Result<(), Error> {
         };
     }
 
-    let input = reader(&args.file.clone())?;
-    handle_match(&mut config, args, input)
+    handle_match(&mut config, args)
 }

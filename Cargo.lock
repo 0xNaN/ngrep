@@ -1061,6 +1061,7 @@ dependencies = [
  "serde",
  "toml",
  "toml_edit",
+ "walkdir",
 ]
 
 [[package]]

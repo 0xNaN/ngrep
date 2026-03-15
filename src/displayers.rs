@@ -4,7 +4,7 @@ use colored::{Color, ColoredString, Colorize};
 
 macro_rules! try_write {
     ($handle:expr, $($arg:tt)*) => {
-        write!($handle, $($arg)*).expect("Failed to write to handle")
+        write!($handle, $($arg)*)
     };
 }
 
@@ -12,6 +12,7 @@ pub struct MatchDisplayerOptions {
     colors: Option<Vec<Color>>,
     line_number: bool,
     only_matching: bool,
+    file_name: bool,
 }
 
 impl MatchDisplayerOptions {
@@ -26,6 +27,7 @@ impl MatchDisplayerOptions {
             colors: Some(vec![Self::RED]),
             line_number: false,
             only_matching: false,
+            file_name: false,
         }
     }
 
@@ -44,6 +46,11 @@ impl MatchDisplayerOptions {
         self.only_matching = only_matching;
         self
     }
+
+    pub fn with_file_name(mut self, file_name: bool) -> Self {
+        self.file_name = file_name;
+        self
+    }
 }
 
 pub struct MatchDisplayer {
@@ -58,10 +65,22 @@ impl MatchDisplayer {
     pub fn display_line<W: Write>(
         &self,
         writer: &mut W,
-        line_inx: usize,
+        name: &str,
+        inx: usize,
         line: &str,
         matches: &[(usize, usize)],
-    ) {
+    ) -> std::io::Result<()> {
+        use std::fmt::Write as _;
+
+        let mut line_prefix = String::new();
+        if self.opts.file_name {
+            let _ = write!(line_prefix, "{name}:");
+        }
+        if self.opts.line_number {
+            let inx = inx + 1;
+            let _ = write!(line_prefix, "{inx}:");
+        }
+
         let mut cursor = 0;
         for (i, match_span) in matches.iter().enumerate() {
             let (start, end) = *match_span;
@@ -72,22 +91,23 @@ impl MatchDisplayer {
                 match_ = match_.bold();
             }
 
-            if i == 0 && self.opts.line_number {
-                try_write!(writer, "{}:", line_inx + 1);
-            }
-            if !self.opts.only_matching {
-                try_write!(writer, "{}{}", &line[cursor..start], match_);
+            if self.opts.only_matching {
+                try_write!(writer, "{}{}\n", line_prefix, match_)?;
             } else {
-                try_write!(writer, "{}\n", match_);
+                if i == 0 {
+                    try_write!(writer, "{}", line_prefix)?;
+                }
+                try_write!(writer, "{}{}", &line[cursor..start], match_)?;
             }
 
             cursor = end;
         }
         if !self.opts.only_matching {
-            try_write!(writer, "{}\n", &line[cursor..]);
+            try_write!(writer, "{}\n", &line[cursor..])?;
         }
 
         writer.flush().expect("Error flushing output");
+        Ok(())
     }
 }
 
@@ -107,7 +127,9 @@ mod tests {
         let (mut out, displayer) =
             setup_displayer(MatchDisplayerOptions::default().with_line_number(true));
 
-        displayer.display_line(&mut out, 0, "hello world", &[(0, 5)]);
+        displayer
+            .display_line(&mut out, "-", 0, "hello world", &[(0, 5)])
+            .unwrap();
         assert!(String::from_utf8(out).unwrap().starts_with("1:"));
     }
 
@@ -119,7 +141,9 @@ mod tests {
                 .with_only_matching(true),
         );
 
-        displayer.display_line(&mut out, 0, "hello world", &[(0, 5)]);
+        displayer
+            .display_line(&mut out, "-", 0, "hello world", &[(0, 5)])
+            .unwrap();
         assert_eq!(String::from_utf8(out).unwrap(), "hello\n");
     }
 }
