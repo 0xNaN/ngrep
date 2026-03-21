@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::{fs::File, io::Write};
 
 use anyhow::{bail, Context, Ok, Result};
-use expanduser::expanduser;
+use shellexpand::tilde;
 use toml_edit::{DocumentMut, Table, Value};
 
 use crate::Args;
@@ -162,11 +162,8 @@ pub struct NgrepConfig {
 
 impl NgrepConfig {
     pub fn load_or_init(args: &Args) -> Result<NgrepConfig> {
-        let toml_path = expanduser(
-            PathBuf::from_iter([NGREP_HOME, NGREP_TOML_CONFIG])
-                .to_string_lossy()
-                .to_string(),
-        )?;
+        let toml_path =
+            PathBuf::from_iter([tilde(NGREP_HOME).to_string().as_str(), NGREP_TOML_CONFIG]);
         Self::load(args.clone(), TomlConfig::load_or_init(&toml_path)?)
     }
 

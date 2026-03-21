@@ -15,6 +15,7 @@ toml = "0.8.23"
 edit = "0.1.5"
 toml_edit = "0.22.27"
 walkdir = "2.5.0"
+shellexpand = "3.1.2"
 
 [workspace]
 resolver = "2"
