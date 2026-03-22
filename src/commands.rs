@@ -1,13 +1,11 @@
 use clap::error::ErrorKind;
 use clap::CommandFactory;
-use edit::get_editor;
+use edit::edit_file;
 use fancy_regex::{Expr, NeuralMatcherFactory, RegexBuilder};
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 use std::iter;
-use std::os::unix::process::CommandExt;
 use std::path::Path;
-use std::process::Command;
 use std::sync::{Arc, RwLock};
 use walkdir::WalkDir;
 
@@ -86,12 +84,7 @@ pub fn handle_import<P: AsRef<Path>>(
 }
 
 pub fn handle_config(config: &NgrepConfig) -> Result<()> {
-    let editor = get_editor().context("No default $EDITOR found")?;
-
-    let error = Command::new(editor).args([config.path()]).exec();
-
-    eprintln!("Failed to exec: {}", error);
-    std::process::exit(1);
+    edit_file(config.path()).context(format!("Failed to edit config at: {:?}", config.path()))
 }
 
 pub fn handle_match(config: &mut NgrepConfig, args: Args) -> Result<()> {
